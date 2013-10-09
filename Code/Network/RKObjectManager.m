@@ -135,7 +135,7 @@ extern NSString *RKStringDescribingRequestMethod(RKRequestMethod method);
     id valueAtNullKey = [self.parameters objectForKey:[NSNull null]];
     if (valueAtNullKey) {
         if ([self.parameters count] == 1) return valueAtNullKey;
-
+        
         // If we have values at `[NSNull null]` and other key paths, we have an invalid configuration
         [NSException raise:NSInvalidArgumentException format:@"Invalid request descriptor configuration: The request descriptors specify that multiple objects be serialized at incompatible key paths. Cannot serialize objects at the `nil` root key path in the same request as objects with a non-nil root key path. Please check your request descriptors and try again."];
     }
@@ -242,7 +242,7 @@ BOOL RKDoesArrayOfResponseDescriptorsContainOnlyEntityMappings(NSArray *response
             [accessibleMappings unionSet:graphVisitor.mappings];
         }
     }
-
+    
     NSMutableSet *mappingClasses = [NSMutableSet set];
     // Enumerate all mappings and search for an `RKEntityMapping`
     for (RKMapping *mapping in accessibleMappings) {
@@ -252,7 +252,7 @@ BOOL RKDoesArrayOfResponseDescriptorsContainOnlyEntityMappings(NSArray *response
             [mappingClasses addObject:mapping.class];
         }
     }
-
+    
     if ([mappingClasses count]) {
         for (Class mappingClass in mappingClasses) {
             if (! [mappingClass isSubclassOfClass:[RKEntityMapping class]]) {
@@ -261,7 +261,7 @@ BOOL RKDoesArrayOfResponseDescriptorsContainOnlyEntityMappings(NSArray *response
         }
         return YES;
     }
-
+    
     return NO;
 }
 
@@ -315,6 +315,10 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
     return RKMIMETypeFormURLEncoded;
 }
 
+@interface AFHTTPClient ()
+@property (readonly, nonatomic, strong) NSURLCredential *defaultCredential;
+@end
+
 ///////////////////////////////////
 
 @interface RKObjectManager ()
@@ -334,7 +338,7 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
     self = [super init];
     if (self) {
         self.HTTPClient = client;
-        self.router = [[RKRouter alloc] initWithBaseURL:client.baseURL];        
+        self.router = [[RKRouter alloc] initWithBaseURL:client.baseURL];
         self.operationQueue = [NSOperationQueue new];
         self.mutableRequestDescriptors = [NSMutableArray new];
         self.mutableResponseDescriptors = [NSMutableArray new];
@@ -342,14 +346,14 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
         self.registeredHTTPRequestOperationClasses = [NSMutableArray new];
         self.registeredManagedObjectRequestOperationClasses = [NSMutableArray new];
         self.registeredObjectRequestOperationClasses = [NSMutableArray new];
-        self.requestSerializationMIMEType = RKMIMETypeFromAFHTTPClientParameterEncoding(client.parameterEncoding);        
-
+        self.requestSerializationMIMEType = RKMIMETypeFromAFHTTPClientParameterEncoding(client.parameterEncoding);
+        
         // Set shared manager if nil
         if (nil == sharedManager) {
             [RKObjectManager setSharedManager:self];
         }
     }
-
+    
     return self;
 }
 
@@ -410,7 +414,7 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
 	} else {
         request = [self.HTTPClient requestWithMethod:method path:path parameters:parameters];
     }
-
+    
 	return request;
 }
 
@@ -453,7 +457,7 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
         }
     }
     id requestParameters = [objectParameters requestParameters];
-
+    
     // Merge the extra parameters if possible
     if ([requestParameters isKindOfClass:[NSArray class]] && parameters) {
         [NSException raise:NSInvalidArgumentException format:@"Cannot merge parameters with array of object representations serialized with a nil root key path."];
@@ -462,7 +466,7 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
     } else if (parameters && !requestParameters) {
         requestParameters = parameters;
     }
-
+    
     return requestParameters;
 }
 
@@ -526,11 +530,20 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
     while (requestOperationClass = [enumerator nextObject]) {
         if ([requestOperationClass canProcessRequest:request]) break;
         requestOperationClass = nil;
-    }    
+    }
     return requestOperationClass;
 }
 
 #pragma mark - Object Request Operations
+
+- (void)copyStateFromHTTPClientToHTTPRequestOperation:(AFHTTPRequestOperation *)operation
+{
+    operation.credential = self.HTTPClient.defaultCredential;
+    operation.allowsInvalidSSLCertificate = self.HTTPClient.allowsInvalidSSLCertificate;
+#ifdef _AFNETWORKING_PIN_SSL_CERTIFICATES_
+    operation.SSLPinningMode = self.HTTPClient.defaultSSLPinningMode;
+#endif
+}
 
 - (RKObjectRequestOperation *)objectRequestOperationWithRequest:(NSURLRequest *)request
                                                         success:(void (^)(RKObjectRequestOperation *operation, RKMappingResult *mappingResult))success
@@ -538,6 +551,7 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
 {
     Class HTTPRequestOperationClass = [self requestOperationClassForRequest:request fromRegisteredClasses:self.registeredHTTPRequestOperationClasses] ?: [RKHTTPRequestOperation class];
     RKHTTPRequestOperation *HTTPRequestOperation = [[HTTPRequestOperationClass alloc] initWithRequest:request];
+    [self copyStateFromHTTPClientToHTTPRequestOperation:HTTPRequestOperation];
     Class objectRequestOperationClass = [self requestOperationClassForRequest:request fromRegisteredClasses:self.registeredObjectRequestOperationClasses] ?: [RKObjectRequestOperation class];
     RKObjectRequestOperation *operation = [[objectRequestOperationClass alloc] initWithHTTPRequestOperation:HTTPRequestOperation responseDescriptors:self.responseDescriptors];
     [operation setCompletionBlockWithSuccess:success failure:failure];
@@ -551,8 +565,9 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
 {
     Class HTTPRequestOperationClass = [self requestOperationClassForRequest:request fromRegisteredClasses:self.registeredHTTPRequestOperationClasses] ?: [RKHTTPRequestOperation class];
     RKHTTPRequestOperation *HTTPRequestOperation = [[HTTPRequestOperationClass alloc] initWithRequest:request];
+    [self copyStateFromHTTPClientToHTTPRequestOperation:HTTPRequestOperation];
     Class objectRequestOperationClass = [self requestOperationClassForRequest:request fromRegisteredClasses:self.registeredManagedObjectRequestOperationClasses] ?: [RKManagedObjectRequestOperation class];
-    RKManagedObjectRequestOperation *operation = (RKManagedObjectRequestOperation *)[[objectRequestOperationClass alloc] initWithHTTPRequestOperation:HTTPRequestOperation responseDescriptors:self.responseDescriptors];        
+    RKManagedObjectRequestOperation *operation = (RKManagedObjectRequestOperation *)[[objectRequestOperationClass alloc] initWithHTTPRequestOperation:HTTPRequestOperation responseDescriptors:self.responseDescriptors];
     [operation setCompletionBlockWithSuccess:success failure:failure];
     operation.managedObjectContext = managedObjectContext ?: self.managedObjectStore.mainQueueManagedObjectContext;
     operation.managedObjectCache = self.managedObjectStore.managedObjectCache;
@@ -589,7 +604,7 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
         // Construct a Core Data operation
         NSManagedObjectContext *managedObjectContext = [object respondsToSelector:@selector(managedObjectContext)] ? [object managedObjectContext] : self.managedObjectStore.mainQueueManagedObjectContext;
         operation = [self managedObjectRequestOperationWithRequest:request managedObjectContext:managedObjectContext success:nil failure:nil];
-
+        
         if ([object isKindOfClass:[NSManagedObject class]]) {
             static NSPredicate *temporaryObjectsPredicate = nil;
             if (! temporaryObjectsPredicate) temporaryObjectsPredicate = [NSPredicate predicateWithFormat:@"objectID.isTemporaryID == YES"];
@@ -598,7 +613,7 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
                 RKLogInfo(@"Asked to perform object request for NSManagedObject with temporary object IDs: Obtaining permanent ID before proceeding.");
                 __block BOOL _blockSuccess;
                 __block NSError *_blockError;
-
+                
                 [[object managedObjectContext] performBlockAndWait:^{
                     _blockSuccess = [[object managedObjectContext] obtainPermanentIDsForObjects:[temporaryObjects allObjects] error:&_blockError];
                 }];
@@ -651,7 +666,7 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
                               success:(void (^)(RKObjectRequestOperation *operation, RKMappingResult *mappingResult))success
                               failure:(void (^)(RKObjectRequestOperation *operation, NSError *error))failure
 {
-    NSParameterAssert(routeName);    
+    NSParameterAssert(routeName);
     RKRoute *route = [self.router.routeSet routeForName:routeName];
     NSDictionary *interpolatedParameters = nil;
     NSURL *URL = [self URLWithRoute:route object:object interpolatedParameters:&interpolatedParameters];
@@ -662,7 +677,7 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
     operation.mappingMetadata = @{ @"routing": @{ @"parameters": interpolatedParameters, @"route": route } };
     [operation setCompletionBlockWithSuccess:success failure:failure];
     [self enqueueObjectRequestOperation:operation];
-
+    
 }
 
 - (void)getObjectsAtPath:(NSString *)path
@@ -880,7 +895,7 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
 - (void)enqueueBatchOfObjectRequestOperations:(NSArray *)operations
                                      progress:(void (^)(NSUInteger numberOfFinishedOperations, NSUInteger totalNumberOfOperations))progress
                                    completion:(void (^)(NSArray *operations))completion {
-
+    
     __block dispatch_group_t dispatchGroup = dispatch_group_create();
     NSBlockOperation *batchedOperation = [NSBlockOperation blockOperationWithBlock:^{
         dispatch_group_notify(dispatchGroup, dispatch_get_main_queue(), ^{
@@ -892,7 +907,7 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
         dispatch_release(dispatchGroup);
 #endif
     }];
-
+    
     for (RKObjectRequestOperation *operation in operations) {
         void (^originalCompletionBlock)(void) = [operation.completionBlock copy];
         __weak RKObjectRequestOperation *weakOperation = operation;
@@ -902,25 +917,25 @@ static NSString *RKMIMETypeFromAFHTTPClientParameterEncoding(AFHTTPClientParamet
                 if (originalCompletionBlock) {
                     originalCompletionBlock();
                 }
-
+                
                 __block NSUInteger numberOfFinishedOperations = 0;
                 [operations enumerateObjectsUsingBlock:^(id obj, NSUInteger idx, BOOL *stop) {
                     if ([(NSOperation *)obj isFinished]) {
                         numberOfFinishedOperations++;
                     }
                 }];
-
+                
                 if (progress) {
                     progress(numberOfFinishedOperations, [operations count]);
                 }
-
+                
                 dispatch_group_leave(dispatchGroup);
             });
         }];
-
+        
         dispatch_group_enter(dispatchGroup);
         [batchedOperation addDependency:operation];
-
+        
         [self enqueueObjectRequestOperation:operation];
     }
     [self.operationQueue addOperation:batchedOperation];
